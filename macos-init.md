@@ -130,33 +130,9 @@ brew install --cask netron
 
 ---
 
-## 12. Configure Samba
-
-Install:
+## 12. Install Rosetta
 
 ```bash
-brew install samba
+softwareupdate --install-rosetta --agree-to-license
 ```
 
-Configuration file: `/usr/local/etc/smb.conf`
-Example:
-
-```ini
-[global]
-   workgroup = WORKGROUP
-   server string = macOS Samba Server
-   security = user
-   map to guest = Bad User
-
-[Shared]
-   path = /Users/youruser/Shared
-   browseable = yes
-   read only = no
-   guest ok = yes
-```
-
-Start Samba:
-
-```bash
-brew services start samba
-```
