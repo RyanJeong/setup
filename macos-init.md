@@ -41,11 +41,10 @@ Go to: **System Settings → Keyboard → Keyboard Shortcuts → App Shortcuts**
 Add the following:
 
 * **All Applications**
+  * Show Help menu, Zoom, Top, Bottom, Left, Right
 
-  * Show Help menu → `⌘⇧/`
-  * Left → `⌃⌥←`
-  * Zoom → `⌃⌥\`
-  * Right → `⌃⌥→`
+* **Terminal**
+  * Show Next Tab, Show Previous Tab
 
 ![Keyboard Shortcuts Screenshot](img/macos-init-keyboard-shortcuts.png)
 
