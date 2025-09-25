@@ -7,111 +7,11 @@ sudo apt install -y screen build-essential libssl-dev zlib1g-dev libncurses5-dev
 screen
 ```
 
-Notes:
-
-* `sudo` is required only so administrators can use it to run commands.
-* `openssh-server` provides `sshd`.
+Notes: `openssh-server` provides `sshd`.
 
 ---
 
-## 2. Create user `<USER>` (no sudo by default)
-
-Run as root:
-
-```bash
-GUEST_USER=<USER>
-
-useradd -m -s /bin/bash "$GUEST_USER"
-passwd -l "$GUEST_USER"
-```
-
-Explanation:
-
-* `-m` creates `/home/<USER>`.
-* `-s /bin/bash` sets the shell.
-* `passwd -l <USER>` locks the password so password login is not available.
-
-## Opt. Create user `admin`
-
-```bash
-# create full-sudo user 'admin' and set a password interactively
-useradd -m -s /bin/bash admin
-passwd admin # enter a secure password when prompted
-
-# grant full sudo via ubuntu/debian sudo group
-usermod -aG sudo admin
-```
-
----
-
-## 3. Prepare `install.sh` and `uninstall.sh`
-
-Place the scripts in `/home/<USER>` and set ownership and permissions so they cannot be modified by `<USER>`.
-
-Run as root:
-
-```bash
-# place your scripts under /home/<USER>
-chown root:root "/home/$GUEST_USER/install.sh" "/home/$GUEST_USER/uninstall.sh"
-chmod 0755 "/home/$GUEST_USER/install.sh" "/home/$GUEST_USER/uninstall.sh"
-```
-
-Security note:
-
-* Making the scripts owned by `root` prevents `<USER>` from editing them and gaining privilege escalation.
-* If the scripts need editable content, keep editable parts in `/home/<USER>/data` and ensure scripts perform controlled operations only.
-
----
-
-## 4. Configure sudoers to allow only specific commands
-
-Create a file under `/etc/sudoers.d/<USER>` with mode `0440`.
-
-Run as root (recommended using `visudo` to validate syntax):
-
-```bash
-cat > /etc/sudoers.d/$GUEST_USER <<EOF
-# Allow $GUEST_USER to run two scripts and two rm commands without password.
-$GUEST_USER ALL=(root) NOPASSWD: /home/$GUEST_USER/install.sh, /home/$GUEST_USER/uninstall.sh, /bin/rm -rf /var/foo, /bin/rm -rf /home/$GUEST_USER/.foo
-EOF
-chmod 0440 "/etc/sudoers.d/$GUEST_USER"
-```
-
-Notes:
-
-* Use the absolute paths shown above. Sudoers matches the full path and the given argument pattern.
-* The `rm -rf` entries are exact. If `<USER>` runs a different argument set for `rm`, sudo will deny it.
-* Test sudoers syntax with `visudo -c`.
-
----
-
-## 5. Configure SSH to allow only key-based logins
-
-Edit `/etc/ssh/sshd_config` and ensure these lines exist and are not duplicated with conflicting values.
-
-Recommended changes (run as root or use an editor):
-
-```bash
-# recommended sshd_config settings for key-only login
-PermitRootLogin no
-PubkeyAuthentication yes
-PasswordAuthentication no
-ChallengeResponseAuthentication no
-UsePAM no
-AuthorizedKeysFile %h/.ssh/authorized_keys
-```
-
-After editing, restart the SSH service:
-
-```bash
-systemctl restart sshd
-# or on some systems
-service ssh restart
-```
-
----
-
-## 6. Install `authorized_keys` for `<USER>`
+## 2. Install `authorized_keys` for `<USER>`
 
 On the administrator machine, collect the public key(s) for `<USER>` and copy them to the target server.
 
@@ -131,60 +31,79 @@ chown -R "$GUEST_USER":"$GUEST_USER" "/home/$GUEST_USER/.ssh"
 
 Important:
 
-* Do not leave `authorized_keys` world writable.
+* Do not leave `authorized_keys` file writable.
 * Do not enable password authentication for `<USER>` if you want key-only access.
 
 ---
 
-## 7. Testing the configuration
+## 3. Configure SSH to allow only key-based logins
 
-1. From a client with the private key try:
-
-    ```bash
-    ssh -i /path/to/private_key $GUEST_USER@server.example.com
-    ```
-
-2. Verify password login is denied and key login succeeds.
-
-3. Test sudo restrictions as `<USER>`:
-
-    ```bash
-    # allowed
-    sudo "/home/$GUEST_USER/install.sh"
-    sudo "/home/$GUEST_USER/uninstall.sh"
-    sudo /bin/rm -rf /var/foo
-    sudo /bin/rm -rf "/home/$GUEST_USER/.foo"
-    
-    # not allowed examples
-    sudo apt update
-    sudo /bin/rm -rf /etc
-    ```
-
-Sudo should allow only the listed commands.
-
----
-
-## 8. Hardening and notes
-
-* Keep `install.sh` and `uninstall.sh` controlled and audited. They run as root.
-* Avoid allowing `<USER>` to run a shell via sudo.
-* If a script requires running other commands as root, include those operations inside the root-owned script rather than giving `<USER>` sudo for arbitrary commands.
-* Use `visudo -c` after editing sudoers files to verify syntax.
-
----
-
-## 9. Rollback
-
-To remove the special sudo privileges and lock down again, run as root:
+Run the following script:
 
 ```bash
-rm -f "/etc/sudoers.d/$GUEST_USER"
-chmod 0440 "/etc/sudoers.d/$GUEST_USER" || true
+#!/bin/bash
+# Purpose: Configure SSH to allow only public key login, disable password login, disable root login
+
+CONFIG_FILE="/etc/ssh/sshd_config"
+BACKUP_FILE="/etc/ssh/sshd_config.bak.$(date +%F_%T)"
+
+# 1. Backup the original file
+cp "$CONFIG_FILE" "$BACKUP_FILE" || { echo "Backup failed"; exit 1; }
+
+# 2. Function to set or update an option
+set_sshd_option() {
+    local key="$1"
+    local value="$2"
+    if grep -qE "^\s*${key}\s+" "$CONFIG_FILE"; then
+        sed -i -E "s|^\s*${key}\s+.*|${key} ${value}|g" "$CONFIG_FILE"
+    else
+        echo "${key} ${value}" >> "$CONFIG_FILE"
+    fi
+}
+
+# 3. Apply the desired options
+set_sshd_option "PermitRootLogin" "no"
+set_sshd_option "PubkeyAuthentication" "yes"
+set_sshd_option "PasswordAuthentication" "no"
+set_sshd_option "ChallengeResponseAuthentication" "no"
+set_sshd_option "UsePAM" "no"
+set_sshd_option "AuthorizedKeysFile" "%h/.ssh/authorized_keys"
+
+# 4. Restart SSH service
+systemctl restart sshd || { echo "Failed to restart sshd"; exit 1; }
+
+echo "sshd_config updated successfully. Backup: $BACKUP_FILE"
 ```
 
-To re-enable password login (not recommended), edit `/etc/ssh/sshd_config` and set `PasswordAuthentication yes` then restart `sshd`.
+---
 
-## 10. Extra Devkit
+## 4. Install Docker
+
+```bash
+sudo apt update
+sudo apt upgrade -y
+sudo apt install -y qemu-user-static binfmt-support locales
+
+sudo locale-gen en_GB.UTF-8
+
+echo "" >> ~/.bashrc
+echo "export LANG=en_GB.UTF-8" >> ~/.bashrc
+echo "export LC_ALL=en_GB.UTF-8" >> ~/.bashrc
+source ~/.bashrc
+
+# Install a Docker
+curl -fsSL https://get.docker.com -o get-docker.sh
+sudo sh get-docker.sh
+sudo usermod -aG docker $USER
+sudo chmod 666 /var/run/docker.sock
+
+sudo systemctl enable docker
+sudo systemctl start docker
+```
+
+---
+
+## 5. Install Extra Devkit
 
 Open a new screen:
 
@@ -237,9 +156,11 @@ cat /proc/mounts | grep home_munseongjeong_share >/dev/null 2>&1 \
 ```
 
 ```bash
-echo "" >> ~/.bashrc \
+chmod +x mount_samba.sh \
+  && echo "" >> ~/.bashrc \
   && echo "# Samba mount script" >> ~/.bashrc \
-  && echo "~/mount_samba.sh" >> ~/.bashrc
+  && echo "~/mount_samba.sh" >> ~/.bashrc \
+  && source ~/.bashrc
 ```
 
 ## Appendix B. Forward `192.168.0.100:1234` to `192.168.0.200:1234` via Apache reverse proxy
@@ -284,7 +205,7 @@ echo "" >> ~/.bashrc \
 
 ### Proxy Toggle
 
-```shell
+```bash
 #!/bin/bash
 
 MODS_AVAILABLE="/etc/apache2/mods-available/proxy.conf"
