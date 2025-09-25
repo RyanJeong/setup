@@ -116,7 +116,7 @@ In the screen:
 ```bash
 mkdir temp
 pushd temp
-for ver in "3.6.9" "3.7.16" "3.8.16""3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do 
+for ver in "3.6.9" "3.7.16" "3.8.16" "3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do 
   wget https://www.python.org/ftp/python/${ver}/Python-${ver}.tgz
   tar -xzvf *${ver}.tgz
   rm -rf *${ver}.tgz
