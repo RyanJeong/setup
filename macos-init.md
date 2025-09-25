@@ -135,3 +135,8 @@ brew install --cask netron
 softwareupdate --install-rosetta --agree-to-license
 ```
 
+## 13. iCloud Symlink
+
+```bash
+ln -s ~/Library/Mobile\ Documents/com\~apple\~CloudDocs ~/iCloud
+```
