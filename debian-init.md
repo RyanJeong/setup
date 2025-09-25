@@ -2,32 +2,9 @@
 
 ## 1. Install base tools
 
-Run as root:
-
 ```bash
-apt update
-apt install -y git curl wget vim openssh-server sudo \
-  python3.6 python3.6-dev \
-  python3.7 python3.7-dev \
-  python3.8 python3.8-dev \
-  g++
-```
-
-```bash
-apt install -y build-essential libssl-dev zlib1g-dev libncurses5-dev libncursesw5-dev libreadline-dev libsqlite3-dev libgdbm-dev libdb5.3-dev libbz2-dev libexpat1-dev liblzma-dev libffi-dev wget 
-
-mkdir temp
-pushd temp
-for ver in "3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do 
-  wget https://www.python.org/ftp/python/${ver}/Python-${ver}.tgz
-  tar -xzvf *${ver}.tgz
-  rm -rf *${ver}.tgz
-  pushd Python-${ver}
-  ./configure --enable-optimizations && make -j$(nproc) && make altinstall
-  popd
-done
-popd temp
-rm -rf temp
+sudo apt install -y screen build-essential libssl-dev zlib1g-dev libncurses5-dev libncursesw5-dev libreadline-dev libsqlite3-dev libgdbm-dev libdb5.3-dev libbz2-dev libexpat1-dev liblzma-dev libffi-dev wget
+screen
 ```
 
 Notes:
@@ -124,7 +101,7 @@ UsePAM no
 AuthorizedKeysFile %h/.ssh/authorized_keys
 ```
 
-After editing restart the SSH service:
+After editing, restart the SSH service:
 
 ```bash
 systemctl restart sshd
@@ -206,6 +183,33 @@ chmod 0440 "/etc/sudoers.d/$GUEST_USER" || true
 ```
 
 To re-enable password login (not recommended), edit `/etc/ssh/sshd_config` and set `PasswordAuthentication yes` then restart `sshd`.
+
+## 10. Extra Devkit
+
+Open a new screen:
+
+```bash
+screen
+```
+
+In the screen:
+
+```bash
+mkdir temp
+pushd temp
+for ver in "3.6.9" "3.7.16" "3.8.16""3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do 
+  wget https://www.python.org/ftp/python/${ver}/Python-${ver}.tgz
+  tar -xzvf *${ver}.tgz
+  rm -rf *${ver}.tgz
+  pushd Python-${ver}
+  ./configure --enable-optimizations && make -j$(nproc) && sudo make altinstall
+  popd
+done
+popd temp
+rm -rf temp
+```
+
+Detach the screen to push `Ctrl` + `D`.
 
 ---
 
