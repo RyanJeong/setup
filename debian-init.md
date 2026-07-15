@@ -7,7 +7,7 @@ sudo apt install -y screen build-essential libssl-dev zlib1g-dev libncurses5-dev
 screen
 ```
 
-Notes: `openssh-server` provides `sshd`.
+Note: `openssh-server` provides `sshd`.
 
 ---
 
@@ -18,6 +18,7 @@ On the administrator machine, collect the public key(s) for `<USER>` and copy th
 Run as root on the server:
 
 ```bash
+GUEST_USER=<USER>
 PUBKEY=<PASTE_YOUR_KEY_HERE>
 
 mkdir -p "/home/$GUEST_USER/.ssh"
@@ -31,8 +32,8 @@ chown -R "$GUEST_USER":"$GUEST_USER" "/home/$GUEST_USER/.ssh"
 
 Important:
 
-* Do not leave `authorized_keys` file writable.
-* Do not enable password authentication for `<USER>` if you want key-only access.
+- Do not leave the `authorized_keys` file writable.
+- Do not enable password authentication for `<USER>` if you want key-only access.
 
 ---
 
@@ -91,7 +92,7 @@ echo "export LANG=en_GB.UTF-8" >> ~/.bashrc
 echo "export LC_ALL=en_GB.UTF-8" >> ~/.bashrc
 source ~/.bashrc
 
-# Install a Docker
+# Install Docker
 curl -fsSL https://get.docker.com -o get-docker.sh
 sudo sh get-docker.sh
 sudo usermod -aG docker $USER
@@ -116,7 +117,7 @@ In the screen:
 ```bash
 mkdir temp
 pushd temp
-for ver in "3.6.15" "3.7.17" "3.8.17" "3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do 
+for ver in "3.6.15" "3.7.17" "3.8.17" "3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.5"; do
   wget https://www.python.org/ftp/python/${ver}/Python-${ver}.tgz
   tar -xzvf *${ver}.tgz
   rm -rf *${ver}.tgz
@@ -124,17 +125,133 @@ for ver in "3.6.15" "3.7.17" "3.8.17" "3.9.23" "3.10.9" "3.11.9" "3.12.9" "3.13.
   ./configure --enable-optimizations && make -j$(nproc) && sudo make altinstall
   popd
 done
-popd temp
+popd
 rm -rf temp
 ```
 
-Detach the screen to push `Ctrl` + `D`.
+Detach the screen with `Ctrl-a` then `d`.
+
+---
+
+## 6. tmux
+
+```bash
+sudo apt update && sudo apt install -y tmux git
+```
+
+### tmux Session Persistence (Ubuntu/Linux)
+
+Persist tmux sessions across reboots using **tmux-resurrect** (save/restore) and **tmux-continuum** (auto-save, auto-restore, auto-start on boot via systemd), managed by **TPM**.
+
+- Survives a reboot: sessions, windows, panes, layout, per-pane working directory, visible pane contents.
+- Does *not* survive: programs running inside panes (e.g. `claude`, Jenkins, scripts). Panes reopen, but you must re-run the program.
+
+#### 1. Installation (one-time)
+
+1. Install TPM (plugin manager):
+
+    ```bash
+    git clone https://github.com/tmux-plugins/tpm ~/.tmux/plugins/tpm
+    ```
+
+2. Add to `~/.tmux.conf` (see the provided `.tmux.conf`):
+
+    ```tmux
+    set -g @plugin 'tmux-plugins/tpm'
+    set -g @plugin 'tmux-plugins/tmux-resurrect'
+    set -g @plugin 'tmux-plugins/tmux-continuum'   # keep continuum LAST
+    set -g @resurrect-capture-pane-contents 'on'
+    set -g @continuum-restore 'on'
+    set -g @continuum-boot 'on'
+    run '~/.tmux/plugins/tpm/tpm'                  # keep this at the very bottom
+    ```
+
+3. Install the plugins (downloads resurrect + continuum):
+
+    ```bash
+    ~/.tmux/plugins/tpm/bin/install_plugins
+    ```
+
+    - Alternative: inside tmux, press `prefix + I` (default prefix `Ctrl-b`).
+    - `tmux source-file` only reloads config; it does *not* download plugins.
+
+4. Reload config into the running server:
+
+    ```bash
+    tmux source-file ~/.tmux.conf
+    ```
+
+5. Create an initial save (so the first reboot has something to restore):
+
+    ```bash
+    ~/.tmux/plugins/tmux-resurrect/scripts/save.sh
+    ```
+
+    - Alternative: inside tmux, press `prefix + Ctrl-s`.
+
+6. Boot auto-start (systemd): with `@continuum-boot 'on'`, the first tmux start generates and enables `~/.config/systemd/user/tmux.service`. Verify:
+
+    ```bash
+    systemctl --user is-enabled tmux.service   # expect: enabled
+    ```
+
+    - Headless servers only (start tmux at boot without logging in):
+
+    ```bash
+    sudo loginctl enable-linger "$USER"
+    ```
+
+#### 2. Usage
+
+##### Restore after a reboot
+
+- Automatic: on login (GUI, console, or ssh), systemd starts tmux and continuum restores the last save. Just attach:
+
+    ```bash
+    tmux ls
+    tmux attach -t <session-name>
+    ```
+
+- Manual (only if auto-restore didn't run):
+  - Inside tmux: `prefix + Ctrl-r`
+  - From a shell:
+
+    ```bash
+    ~/.tmux/plugins/tmux-resurrect/scripts/restore.sh
+    ```
+
+- Auto-restore runs only on server start, and is skipped if a tmux server is already running. Let boot auto-start handle it -- don't start tmux manually first.
+
+##### Save
+
+- Automatic: every 15 min, plus immediately on new-session creation (`session-created` hook).
+- Manual: `prefix + Ctrl-s`.
+
+##### Verify the latest save
+
+```bash
+DIR="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
+[ -d "$DIR" ] || DIR="$HOME/.tmux/resurrect"
+ls -la "$DIR"                                            # expect 'last' + tmux_resurrect_*.txt
+awk -F '\t' '$1=="pane"{print $2}' "$DIR/last" | sort -u | wc -l   # session count
+```
+
+#### 3. Notes & tuning
+
+- Service file: `~/.config/systemd/user/tmux.service` (auto-generated; regenerated on tmux start -- override via a drop-in, not by editing it directly).
+- Start command: `set -g @continuum-systemd-start-cmd 'start-server'` (default `new-session -d`; `start-server` avoids a stray empty session and lets restore populate sessions).
+- Inspect the service: `systemctl --user status tmux.service`.
+- Auto-save interval (minutes): `set -g @continuum-save-interval '5'` (`0` disables auto-save).
+- Temporarily disable auto-restore: `touch ~/tmux_no_auto_restore` (delete to re-enable).
+- Auto-restart specific programs on restore: `set -g @resurrect-processes 'ssh psql "~vim"'`.
+- Default prefix `Ctrl-b`. Save = `prefix + Ctrl-s`, Restore = `prefix + Ctrl-r`.
+- Keep `tmux-continuum` last; a theme plugin that overwrites `status-right` after it silently stops auto-save.
 
 ---
 
 ## Appendix A. Set Up Samba
 
-* `mount_samba.sh`
+- `mount_samba.sh`
 
 ```bash
 #!/bin/bash
@@ -163,6 +280,8 @@ chmod +x mount_samba.sh \
   && source ~/.bashrc
 ```
 
+---
+
 ## Appendix B. Forward `192.168.0.100:1234` to `192.168.0.200:1234` via Apache reverse proxy
 
 1. Install and enable modules
@@ -180,14 +299,14 @@ chmod +x mount_samba.sh \
 
 3. Configure Apache
 
-    * `/etc/apache2/ports.conf`
+    - `/etc/apache2/ports.conf`
 
         ```text
         Listen 80
         Listen 1234
         ```
 
-    * `/etc/apache2/sites-available/000-default.conf`
+    - `/etc/apache2/sites-available/000-default.conf`
 
         ```text
         <VirtualHost *:80>
@@ -221,12 +340,12 @@ function usage() {
 
 function enable_proxy() {
   if [ -e "$MODS_ENABLED" ]; then
-    echo "[✓] proxy.conf already enabled."
+    echo "[OK] proxy.conf already enabled."
   else
     echo "[*] Enabling proxy.conf..."
     sudo ln -s "$MODS_AVAILABLE" "$MODS_ENABLED"
     sudo $APACHE_RELOAD
-    echo "[✓] proxy.conf enabled."
+    echo "[OK] proxy.conf enabled."
   fi
 }
 
@@ -235,17 +354,17 @@ function disable_proxy() {
     echo "[*] Disabling proxy.conf..."
     sudo rm "$MODS_ENABLED"
     sudo $APACHE_RELOAD
-    echo "[✓] proxy.conf disabled."
+    echo "[OK] proxy.conf disabled."
   else
-    echo "[✗] proxy.conf already disabled."
+    echo "[X] proxy.conf already disabled."
   fi
 }
 
 function check_status() {
   if [ -L "$MODS_ENABLED" ]; then
-    echo "[✓] proxy.conf is currently ENABLED."
+    echo "[OK] proxy.conf is currently ENABLED."
   else
-    echo "[✗] proxy.conf is currently DISABLED."
+    echo "[X] proxy.conf is currently DISABLED."
   fi
 }
 
@@ -269,9 +388,11 @@ case "$1" in
 esac
 ```
 
+---
+
 ## Appendix C. SSH Toggle
 
-* `toggle_ssh.sh`
+- `toggle_ssh.sh`
 
 ```bash
 DIR="$HOME/.ssh"
