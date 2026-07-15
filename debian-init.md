@@ -224,7 +224,7 @@ Persist tmux sessions across reboots using **tmux-resurrect** (save/restore) and
 
 ##### Save
 
-- Automatic: every 15 min, plus immediately on new-session creation (`session-created` hook).
+- Automatic: every 15 min (continuum). Lower the interval with `@continuum-save-interval` if you want faster capture.
 - Manual: `prefix + Ctrl-s`.
 
 ##### Verify the latest save
@@ -238,6 +238,9 @@ awk -F '\t' '$1=="pane"{print $2}' "$DIR/last" | sort -u | wc -l   # session cou
 
 #### 3. Notes & tuning
 
+- Do NOT add a `session-created` hook that runs `save.sh`: creating a session during restore overwrites `last` with a near-empty save and breaks restore.
+- Manual restore: start the server first, then restore. Never `kill-session` the last remaining session before restore finishes -- killing the last session kills the server, and `restore.sh` cannot start one.
+- Recover an older save: point `last` at the wanted file, e.g. `ln -sf tmux_resurrect_<timestamp>.txt "$DIR/last"`, then run `restore.sh`. resurrect keeps the last several saves.
 - Service file: `~/.config/systemd/user/tmux.service` (auto-generated; regenerated on tmux start -- override via a drop-in, not by editing it directly).
 - Start command: `set -g @continuum-systemd-start-cmd 'start-server'` (default `new-session -d`; `start-server` avoids a stray empty session and lets restore populate sessions).
 - Inspect the service: `systemctl --user status tmux.service`.
@@ -246,6 +249,102 @@ awk -F '\t' '$1=="pane"{print $2}' "$DIR/last" | sort -u | wc -l   # session cou
 - Auto-restart specific programs on restore: `set -g @resurrect-processes 'ssh psql "~vim"'`.
 - Default prefix `Ctrl-b`. Save = `prefix + Ctrl-s`, Restore = `prefix + Ctrl-r`.
 - Keep `tmux-continuum` last; a theme plugin that overwrites `status-right` after it silently stops auto-save.
+
+### Reliable boot auto-start (static systemd unit)
+
+continuum's `@continuum-boot 'on'` already starts the tmux **server** headlessly via a generated `~/.config/systemd/user/tmux.service`, then re-enables that unit on every tmux start (it recreates the file only if missing). Use a static unit you own if you want explicit control (start command, save-on-shutdown, no continuum management). `@continuum-restore 'on'` still does the actual restoring.
+
+#### 1. Save current sessions first
+
+Safe to do now (no `session-created` hook):
+
+```bash
+~/.tmux/plugins/tmux-resurrect/scripts/save.sh
+```
+
+Confirm it captured your sessions:
+
+```bash
+DIR="${XDG_DATA_HOME:-$HOME/.local/share}/tmux/resurrect"
+[ -d "$DIR" ] || DIR="$HOME/.tmux/resurrect"
+awk -F '\t' '$1=="pane"{print $2}' "$DIR/last" | sort -u | wc -l   # expected session count
+```
+
+#### 2. Disable continuum boot (keep restore)
+
+Otherwise continuum re-enables its own `tmux.service` on the next tmux start (and recreates it if missing).
+
+```bash
+sed -i "s/@continuum-boot 'on'/@continuum-boot 'off'/" ~/.tmux.conf
+tmux source-file ~/.tmux.conf
+```
+
+`@continuum-restore 'on'` must stay -- it does the actual restoring.
+
+#### 3. Remove continuum's generated service
+
+```bash
+systemctl --user disable --now tmux.service 2>/dev/null
+rm -f ~/.config/systemd/user/tmux.service
+systemctl --user daemon-reload
+```
+
+#### 4. Create the static unit
+
+Uses your actual tmux path automatically:
+
+```bash
+TMUX_BIN="$(command -v tmux)"
+mkdir -p ~/.config/systemd/user
+cat > ~/.config/systemd/user/tmux-autostart.service <<EOF
+[Unit]
+Description=tmux server (auto-start + resurrect restore)
+Documentation=man:tmux(1)
+
+[Service]
+Type=forking
+ExecStart=${TMUX_BIN} new-session -d
+ExecStop=%h/.tmux/plugins/tmux-resurrect/scripts/save.sh
+ExecStop=${TMUX_BIN} kill-server
+KillMode=control-group
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+EOF
+```
+
+#### 5. Enable and load
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now tmux-autostart.service
+systemctl --user is-enabled tmux-autostart.service   # expect: enabled
+```
+
+Headless servers only (start at boot without logging in):
+
+```bash
+sudo loginctl enable-linger "$USER"
+```
+
+#### 6. Test
+
+A tmux server is already running now, so this won't trigger a restore (continuum skips restore when a server exists). The real test is a reboot:
+
+```bash
+# after reboot, in any new terminal:
+tmux ls              # sessions should already be there
+tmux attach -t <session-name>
+```
+
+#### Notes
+
+- The unit only **starts the server** (and saves on stop); restore is done by `@continuum-restore 'on'`.
+- If a reboot leaves one stray empty session, it's harmless. To avoid it, replace `new-session -d` with `start-server` in `ExecStart` (starts the server without a session; restore then populates all sessions).
+- `ExecStop` saves before kill on `systemctl --user stop` / logout / shutdown, so the latest state is captured.
+- Inspect / debug: `systemctl --user status tmux-autostart.service` and `journalctl --user -u tmux-autostart.service`.
+- Uninstall: `systemctl --user disable --now tmux-autostart.service && rm ~/.config/systemd/user/tmux-autostart.service && systemctl --user daemon-reload` (re-enable `@continuum-boot 'on'` if you want continuum to manage the service again).
 
 ---
 
