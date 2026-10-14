@@ -94,6 +94,7 @@ git config --global user.email "your_email@example.com"
 
 ```bash
 brew install --cask visual-studio-code
+defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false
 ```
 
 ---
